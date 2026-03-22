@@ -28,22 +28,7 @@ export default function LoginPage({ onLogin }) {
     if (err) { setError('Email ou mot de passe incorrect.'); setLoading(false); return }
 
     const staff = await getStaffProfile(data.user.id)
-    if (!staff) {
-  // Réessayer une fois après 1 seconde
-  await new Promise(r => setTimeout(r, 1000))
-  const staffRetry = await getStaffProfile(data.user.id)
-  if (!staffRetry) { setError('Compte non trouvé. Contactez un administrateur.'); setLoading(false); return }
-  setTempUser({ user: data.user, staff: staffRetry })
-  if (staffRetry.telephone) {
-    await send2FA(staffRetry.telephone)
-    setPhone(staffRetry.telephone)
-    setLoading(false)
-    setStep('2fa')
-  } else {
-    onLogin(data.user, staffRetry)
-  }
-  return
-}
+    if (!staff) { setError('Compte non trouvé. Contactez un administrateur.'); setLoading(false); return }
     if (!staff.actif) { setError('Votre compte est désactivé.'); setLoading(false); return }
 
     setTempUser({ user: data.user, staff })
@@ -107,9 +92,20 @@ export default function LoginPage({ onLogin }) {
         </div>
       </div>
 
-      {/* Droite — Formulaire */}
-      <div className="login-right">
-        <div style={{ width: '100%', maxWidth: 360 }}>
+      {/* Droite — formulaire */}
+      <div style={{
+        width: '100%',
+        maxWidth: 480,
+        background: '#fff',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '40px 40px',
+        overflowY: 'auto',
+        minHeight: '100vh',
+      }}>
+        <div style={{ width:'100%', maxWidth:360 }}>
 
           {/* ÉTAPE LOGIN */}
           {step === 'login' && (
@@ -139,37 +135,76 @@ export default function LoginPage({ onLogin }) {
           )}
 
           {/* ÉTAPE 2FA */}
+          {/* ── ÉTAPE 2FA ── */}
           {step === '2fa' && (
             <>
-              <button onClick={() => setStep('login')} style={{ background: 'none', border: 'none', color: 'var(--t3)', cursor: 'pointer', fontSize: 13, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button onClick={() => { setStep('login'); setOtp(['','','','','','']); setError('') }}
+                style={{ background:'none', border:'none', color:'var(--t3)', cursor:'pointer', fontSize:13, marginBottom:20, display:'flex', alignItems:'center', gap:6, padding:0 }}>
                 ← Retour
               </button>
-              <div className="login-form-title">Vérification 2FA</div>
-              <div className="login-form-sub">
-                Code envoyé par SMS au {phone?.replace(/(\+\d{3})(\d{2})(\d{3})(\d{2})(\d{2})/, '$1 $2 $3 $4 $5')}
+ 
+              <div style={{ fontFamily:'Sora', fontSize:24, fontWeight:700, color:'var(--t1)', marginBottom:6 }}>
+                Vérification 2FA
               </div>
-              {error && <div className="alert alert-error">{error}</div>}
-              <div className="otp-grid">
+              <div style={{ fontSize:13, color:'var(--t3)', marginBottom:24, lineHeight:1.5 }}>
+                Code envoyé par SMS au<br/>
+                <strong style={{ color:'var(--t1)' }}>
+                  {tempUser?.staff?.telephone?.replace(/(\+\d{3})(\d{2})(\d+)/, '$1 $2 ••••••')}
+                </strong>
+              </div>
+ 
+              {error && <div className="alert alert-error" style={{ marginBottom:16 }}>{error}</div>}
+ 
+              {/* Champs OTP — responsive */}
+              <div style={{ display:'flex', gap:8, marginBottom:24, justifyContent:'center' }}>
                 {otp.map((d, i) => (
-                  <input key={i}
+                  <input
+                    key={i}
                     ref={r => { if (r) otpRefs.current[i] = r }}
-                    className="otp-input" maxLength={1} type="number"
-                    value={d} onChange={e => handleOtpChange(e.target.value, i)}
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={1}
+                    value={d}
+                    onChange={e => handleOtpChange(e.target.value, i)}
+                    onKeyDown={e => handleOtpKey(e, i)}
+                    style={{
+                      width: 48, height: 56,
+                      borderRadius: 10,
+                      border: `2px solid ${d ? 'var(--g3)' : 'var(--border)'}`,
+                      textAlign: 'center',
+                      fontSize: 22,
+                      fontWeight: 700,
+                      fontFamily: 'Sora',
+                      color: 'var(--g4)',
+                      outline: 'none',
+                      transition: 'border-color .15s',
+                      background: d ? 'var(--g1)' : '#fff',
+                    }}
+                    onFocus={e => e.target.style.borderColor = 'var(--g3)'}
+                    onBlur={e => e.target.style.borderColor = d ? 'var(--g3)' : 'var(--border)'}
+                    autoFocus={i === 0}
                   />
                 ))}
               </div>
-              <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={handleVerify2FA} disabled={loading}>
+ 
+              <button className="btn btn-primary btn-lg" style={{ width:'100%', marginBottom:12 }}
+                onClick={handleVerify2FA} disabled={loading || otp.join('').length < 6}>
                 {loading ? '⏳ Vérification...' : 'Vérifier et accéder →'}
               </button>
-              <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
-                Code test : <strong>1 2 3 4 5 6</strong>
+ 
+              <div style={{ textAlign:'center', fontSize:12, color:'var(--t3)', marginBottom:12 }}>
+                Code test : <strong style={{ color:'var(--g4)', letterSpacing:4 }}>1 2 3 4 5 6</strong>
               </div>
-              <button onClick={() => send2FA(phone)} style={{ background: 'none', border: 'none', color: 'var(--g4)', cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center' }}>
-                Renvoyer le code SMS
+ 
+              <button
+                onClick={async () => { await send2FA(tempUser?.staff?.telephone); setOtp(['','','','','','']); otpRefs.current[0]?.focus() }}
+                style={{ background:'none', border:'none', color:'var(--g4)', cursor:'pointer', fontSize:13, width:'100%', textAlign:'center', padding:'8px 0' }}>
+                🔄 Renvoyer le code SMS
               </button>
             </>
           )}
-
+ 
         </div>
       </div>
     </div>

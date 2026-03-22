@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 const SUPABASE_URL      = 'https://lspfkmqhpjmxngalrhno.supabase.co'
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxzcGZrbXFocGpteG5nYWxyaG5vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0OTgwNDQsImV4cCI6MjA4OTA3NDA0NH0._i8ExSnvOOMSWEioaOyjKXKgNON-MjeRglYC_ovq2vw'
 
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // ── AUTH ──────────────────────────────────────────────────────
