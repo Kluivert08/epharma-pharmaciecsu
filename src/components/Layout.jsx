@@ -5,7 +5,7 @@ import { signOut, supabase } from '../lib/supabase'
 import { initStreamClient, disconnectStream, STREAM_API_KEY } from '../lib/getstream'
 
 const ROLE_MENUS = {
-  admin:      ['dashboard','pos','caisse','stock','ventes','compta','assurance','livraisons','admin','profil'],
+  admin:      ['dashboard','pos','caisse','stock','ventes','compta','assurance','livraisons','audit','admin','profil'],
   stock:      ['dashboard','stock','profil'],
   vendeuse:   ['dashboard','pos','livraisons','profil'],
   caissiere:  ['dashboard','caisse','ventes','profil'],
@@ -21,6 +21,7 @@ const MENUS = [
   { id:'compta',     label:'Comptabilité',     icon:'📈', path:'/compta' },
   { id:'assurance',  label:'Assurances',       icon:'🏥', path:'/assurance' },
   { id:'livraisons', label:'Livraisons',       icon:'🚚', path:'/livraisons' },
+  { id:'audit',      label:'Audit & Sécurité', icon:'🔒', path:'/audit' },
   { id:'admin',      label:'Administration',   icon:'⚙️',  path:'/admin' },
   { id:'profil',     label:'Mon profil',       icon:'👤',  path:'/profil' },
 ]
@@ -460,4 +461,16 @@ export default function Layout() {
       </div>
     </div>
   )
+
+  //Log de déconnexion
+  async function logout() {
+  if (staff) {
+    await supabase.from('audit_logs').insert({
+      staff_id: staff.id, action: 'logout',
+      details: `${staff.prenom} ${staff.nom}`, statut: 'success',
+    })
+  }
+  await signOut()
+  handleLogout()
+}
 }

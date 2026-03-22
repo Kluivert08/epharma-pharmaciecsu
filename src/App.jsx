@@ -15,6 +15,7 @@ import ProfilePage    from './pages/ProfilePage'
 import AssurancePage  from './pages/AssurancePage'
 import Layout         from './components/Layout'
 import LivraisonsPage from './pages/LivraisonsPage'
+import AuditPage from './pages/AuditPage'
 
 export const AuthContext = React.createContext(null)
 
@@ -49,7 +50,15 @@ export default function App() {
   return (
     <AuthContext.Provider value={{
       user, staff,
-      handleLogin:  (u, s) => { setUser(u); setStaff(s) },
+      handleLogin: (u, s) => {
+  setUser(u); setStaff(s)
+  supabase.from('audit_logs').insert({
+    staff_id: s.id, action: 'login',
+    details: `${s.prenom} ${s.nom} — ${s.role}`,
+    statut: 'success',
+    user_agent: navigator.userAgent.slice(0, 200),
+  })
+},
       handleLogout: ()     => { setUser(null); setStaff(null) },
     }}>
       <BrowserRouter>
@@ -68,6 +77,7 @@ export default function App() {
               <Route path="/profil"     element={<ProfilePage />} />
               <Route path="*"           element={<Navigate to="/" replace />} />
               <Route path="/livraisons" element={<LivraisonsPage />} />
+              <Route path="/audit" element={<AuditPage />} />
             </Route>
           ) : (
             <Route path="*" element={<Navigate to="/login" replace />} />
