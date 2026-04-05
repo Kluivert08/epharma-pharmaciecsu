@@ -74,7 +74,7 @@ export default function LoginPage({ onLogin }) {
       <div className="login-left">
         <div style={{ maxWidth: 440 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24 }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(255,255,255,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>✚</div>
+            <div style={{width: 56, height: 56, borderRadius: 16, background: 'rgba(255,255,255,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>✚</div>
             <div>
               <div className="login-brand">ePharma</div>
             </div>

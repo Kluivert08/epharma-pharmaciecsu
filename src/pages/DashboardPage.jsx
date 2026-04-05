@@ -7,6 +7,9 @@ import {
 import { AuthContext } from '../App'
 import { getDashboard, getVentesParJour, getStockAlertes, supabase } from '../lib/supabase'
 
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+
+
 const COLORS = {
   green:  '#4CAF50',
   green2: '#2E7D32',
