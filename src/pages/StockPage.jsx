@@ -74,8 +74,6 @@ function exportRapportHTML(title, subtitle, stats, tableHeaders, tableRows, foot
 }
 
 // ── VENTES PAGE ───────────────────────────────────────────────
-// ── Remplacez toute la fonction VentesPage dans StockPage.jsx ────────────────
-
 export function VentesPage() {
   const { staff } = useContext(AuthContext)
   const [ventes,    setVentes]    = useState([])
@@ -474,7 +472,14 @@ export function StockPage() {
   const [ajustQty,   setAjustQty]   = useState(0)
   const [ajustNote,  setAjustNote]  = useState('')
   const [filtreStock,setFiltreStock]= useState('tous')  // tous | ok | faible | critique | rupture
-  const [form, setForm] = useState({ nom: '', emoji: '💊', prix_fcfa: '', stock: '', conditionnement: '', categorie_id: '' })
+
+  // MODIFIÉ : State du formulaire avec num_id et date_peremption
+  const [form, setForm] = useState({ 
+    nom: '', emoji: '💊', prix_fcfa: '', stock: '', 
+    conditionnement: '', categorie_id: '',
+    num_id: '',           // Référence QR Code
+    date_peremption: '',   // Date de péremption
+  })
 
   useEffect(() => { loadAll() }, [])
 
@@ -551,10 +556,19 @@ export function StockPage() {
     loadAll()
   }
 
+  // MODIFIÉ : Gestion de la création avec num_id et date_peremption
   async function handleCreateProduit() {
-    await createProduit({ ...form, prix_fcfa: parseInt(form.prix_fcfa), stock: parseInt(form.stock), actif: true })
+    const numId = form.num_id.trim() || `MED-${Date.now().toString(36).toUpperCase()}`
+    await createProduit({ 
+      ...form, 
+      num_id: numId,
+      prix_fcfa: parseInt(form.prix_fcfa), 
+      stock: parseInt(form.stock), 
+      date_peremption: form.date_peremption || null,
+      actif: true 
+    })
     setShowModal(false)
-    setForm({ nom: '', emoji: '💊', prix_fcfa: '', stock: '', conditionnement: '', categorie_id: '' })
+    setForm({ nom:'', emoji:'💊', prix_fcfa:'', stock:'', conditionnement:'', categorie_id:'', num_id:'', date_peremption:'' })
     loadAll()
   }
 
@@ -608,7 +622,8 @@ export function StockPage() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Produit</th><th>Catégorie</th><th>Prix</th><th>Stock</th><th>Valeur</th><th>Niveau</th><th>Actions</th></tr>
+                  {/* MODIFIÉ : Ajout de la colonne Péremption */}
+                  <tr><th>Produit</th><th>Catégorie</th><th>Prix</th><th>Stock</th><th>Péremption</th><th>Valeur</th><th>Niveau</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                   {filtered.map(p => {
@@ -630,6 +645,24 @@ export function StockPage() {
                           <span className={`badge ${niveau === 'ok' ? 'badge-green' : niveau === 'faible' ? 'badge-amber' : 'badge-red'}`}>
                             {p.stock} unité{p.stock > 1 ? 's' : ''}
                           </span>
+                        </td>
+                        {/* NOUVEAU : Cellule Péremption avec calcul des jours */}
+                        <td>
+                          {p.date_peremption ? (() => {
+                            const jours = Math.floor((new Date(p.date_peremption) - new Date()) / 86400000)
+                            return (
+                              <span style={{
+                                fontSize: 12, fontWeight: 600,
+                                color: jours < 0 ? 'var(--danger2)' : jours < 30 ? 'var(--warn2)' : jours < 90 ? '#E65100' : 'var(--t3)',
+                              }}>
+                                {jours < 0 ? '⛔ Expiré' : `J-${jours}`}
+                                <br/>
+                                <span style={{ fontWeight: 400, fontSize: 11 }}>
+                                  {new Date(p.date_peremption).toLocaleDateString('fr-FR')}
+                                </span>
+                              </span>
+                            )
+                          })() : <span style={{ color:'var(--t3)', fontSize:12 }}>—</span>}
                         </td>
                         <td style={{ fontSize: 13, color: 'var(--t2)' }}>{(p.stock * p.prix_fcfa).toLocaleString('fr-FR')} F</td>
                         <td>
@@ -761,6 +794,24 @@ export function StockPage() {
                 <label className="form-label">Stock initial</label>
                 <input className="form-input" type="number" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
               </div>
+
+              {/* NOUVEAUX CHAMPS APRÈS LE STOCK */}
+              <div className="form-group">
+                <label className="form-label">NumId / Réf. QR Code</label>
+                <input className="form-input" value={form.num_id}
+                  onChange={e => setForm({...form, num_id:e.target.value})}
+                  placeholder="Auto-généré si vide" />
+                <div style={{ fontSize:11, color:'var(--t3)', marginTop:4 }}>
+                  Code unique imprimé sur l'étiquette QR du produit
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Date de péremption</label>
+                <input className="form-input" type="date" value={form.date_peremption}
+                  onChange={e => setForm({...form, date_peremption:e.target.value})} />
+              </div>
+
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
                 <label className="form-label">Catégorie</label>
                 <select className="form-input form-select" value={form.categorie_id} onChange={e => setForm({ ...form, categorie_id: e.target.value })}>

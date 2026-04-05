@@ -156,7 +156,7 @@ export default function LoginPage({ onLogin }) {
               {error && <div className="alert alert-error" style={{ marginBottom:16 }}>{error}</div>}
  
               {/* Champs OTP — responsive */}
-              <div style={{ display:'flex', gap:8, marginBottom:24, justifyContent:'center' }}>
+              <div style={{ display:'flex', gap:6, marginBottom:24, justifyContent:'center', maxWidth:340, margin:'0 auto 24px' }}>
                 {otp.map((d, i) => (
                   <input
                     key={i}

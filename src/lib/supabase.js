@@ -90,6 +90,36 @@ export async function createProduit(data) {
 }
 
 // ── COMMANDES POS ─────────────────────────────────────────────
+// Rechercher produit par NumId (QR Code scan)
+export async function getProduitByNumId(numId) {
+  const { data } = await supabase
+    .from('produits')
+    .select('*, categories(slug, nom_fr, emoji)')
+    .eq('num_id', numId)
+    .eq('actif', true)
+    .maybeSingle()
+  return data
+}
+
+// Vérifier péremption d'un produit
+export async function verifierPeremption(nomProduit) {
+  const { data } = await supabase
+    .from('v_stock_peremption')
+    .select('*')
+    .ilike('nom', `%${nomProduit}%`)
+    .order('date_peremption', { ascending: true })
+  return data ?? []
+}
+
+// Produits qui expirent bientôt
+export async function getAlertesPeremption() {
+  const { data } = await supabase
+    .from('v_stock_peremption')
+    .select('*')
+    .in('statut_peremption', ['expire', 'expire_bientot', 'attention'])
+    .order('date_peremption', { ascending: true })
+  return data ?? []
+}
 export async function creerCommandePOS(vendeuse_id, lignes, client = {}, extraData = {}) {
   const sousTotal = lignes.reduce((s, l) => s + l.total_ligne, 0)
   const total     = client.totalPatient ?? sousTotal
