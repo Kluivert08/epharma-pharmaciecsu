@@ -6,6 +6,7 @@ import { getSession, getStaffProfile } from './lib/supabase'
 import LoginPage      from './pages/LoginPage'
 import DashboardPage  from './pages/DashboardPage'
 import POSPage        from './pages/POSPage'
+import AchatsEnLignePage from './pages/AchatsEnLignePage'
 import CaissePage     from './pages/CaissePage'
 import StockPage      from './pages/StockPage'
 import { VentesPage } from './pages/StockPage'
@@ -68,6 +69,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/"           element={<DashboardPage />} />
               <Route path="/pos"        element={<POSPage />} />
+              <Route path="/achats-en-ligne" element={<AchatsEnLignePage />} />
               <Route path="/caisse"     element={<CaissePage />} />
               <Route path="/stock"      element={<StockPage />} />
               <Route path="/ventes"     element={<VentesPage />} />

@@ -276,3 +276,5 @@ tbody tr:last-child td { border-bottom: none; }
 .cart-item-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .qty-btn { width: 26px; height: 26px; border-radius: 6px; border: 1.5px solid var(--border); background: #fff; cursor: pointer; font-size: 14px; color: var(--t1); display: flex; align-items: center; justify-content: center; }
 .qty-btn:hover { border-color: var(--g3); color: var(--g4); }
+
+.leaflet-container { z-index: 1; }

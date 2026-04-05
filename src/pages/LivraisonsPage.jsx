@@ -2,7 +2,7 @@ import React, { useEffect, useState, useContext } from 'react'
 import { AuthContext } from '../App'
 import { supabase } from '../lib/supabase'
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
-import L from 'leaflet' // Importé pour le marqueur personnalisé
+import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 // ── CONFIGURATION LOCALE AUTONOME ──────────────────────────────────────────
@@ -10,15 +10,14 @@ const PHARMACIE_CONFIG = {
   lat: -4.290397, 
   lng: 15.242837, 
   nom: "Pharmacie CSU",
-  zoomInitial: 18 // Réglage du zoom ici (15 = rues visibles)
+  zoomInitial: 18 
 }
 
-// Création de l'icône verte pour la pharmacie
 const greenIcon = new L.DivIcon({
   className: 'custom-div-icon',
   html: `<div style="background-color: var(--g4); width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: var(--shadow);">
-           <div style="transform: rotate(45deg); font-size: 15px;">✚</div>
-         </div>`,
+            <div style="transform: rotate(45deg); font-size: 15px;">✚</div>
+          </div>`,
   iconSize: [30, 30],
   iconAnchor: [15, 30]
 });
@@ -29,36 +28,76 @@ async function getLivraisons() {
   return data ?? []
 }
 
+async function getCommandesPayees() {
+  // On récupère les ventes payées pour les lier à une livraison
+  const { data } = await supabase
+    .from('ventes')
+    .select('id, numero, client_nom, client_tel')
+    .eq('statut', 'payee')
+  return data ?? []
+}
+
 export default function LivraisonsPage() {
   const { staff } = useContext(AuthContext)
   const [livraisons, setLivraisons] = useState([])
+  const [commandes, setCommandes] = useState([]) // Liste des commandes dispo
   const [search, setSearch] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const [form, setForm] = useState({
-    client_nom: '', client_tel: '', adresse: '', note: '', 
-    lat: PHARMACIE_CONFIG.lat, lng: PHARMACIE_CONFIG.lng
+    vente_id: '',
+    client_nom: '', 
+    client_tel: '', 
+    adresse: '', 
+    note: '', 
+    lat: PHARMACIE_CONFIG.lat, 
+    lng: PHARMACIE_CONFIG.lng
   })
 
   useEffect(() => { loadData() }, [])
+  
+  // Charger les commandes payées quand on ouvre le modal
+  useEffect(() => {
+    if (showModal) loadListesCommandes()
+  }, [showModal])
 
   async function loadData() {
     const data = await getLivraisons()
     setLivraisons(data)
   }
 
+  async function loadListesCommandes() {
+    const data = await getCommandesPayees()
+    setCommandes(data)
+  }
+
+  const handleSelectCommande = (venteId) => {
+    const cmd = commandes.find(c => c.id === venteId)
+    if (cmd) {
+      setForm({
+        ...form,
+        vente_id: cmd.id,
+        client_nom: cmd.client_nom || '',
+        client_tel: cmd.client_tel || '',
+      })
+    }
+  }
+
   const handleCreate = async (e) => {
     e.preventDefault()
+    if (!form.vente_id) return alert("Veuillez sélectionner une commande")
+    
     setLoading(true)
     const { error } = await supabase.from('livraisons').insert([{
       ...form,
       vendeuse_id: staff?.id,
       statut: 'en_attente'
     }])
+    
     if (!error) {
       setShowModal(false)
-      setForm({ client_nom: '', client_tel: '', adresse: '', note: '', lat: PHARMACIE_CONFIG.lat, lng: PHARMACIE_CONFIG.lng })
+      setForm({ vente_id: '', client_nom: '', client_tel: '', adresse: '', note: '', lat: PHARMACIE_CONFIG.lat, lng: PHARMACIE_CONFIG.lng })
       loadData()
     }
     setLoading(false)
@@ -93,9 +132,7 @@ export default function LivraisonsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
         {stats.map(s => (
           <div key={s.label} className="card" style={{ padding: '15px', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ fontSize: 24, background: 'var(--g1)', width: 45, height: 45, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {s.icon}
-            </div>
+            <div style={{ fontSize: 24, background: 'var(--g1)', width: 45, height: 45, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{s.icon}</div>
             <div>
               <div style={{ fontSize: 11, color: 'var(--t3)', fontWeight: 700, textTransform: 'uppercase' }}>{s.label}</div>
               <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
@@ -106,43 +143,25 @@ export default function LivraisonsPage() {
 
       {/* RECHERCHE */}
       <div className="card" style={{ marginBottom: 20, padding: 10 }}>
-        <input 
-          className="form-input" 
-          placeholder="🔍 Rechercher un nom ou une adresse..." 
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%' }}
-        />
+        <input className="form-input" placeholder="🔍 Rechercher un nom ou une adresse..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: '100%' }} />
       </div>
 
       {/* CARTE ET LISTE */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, height: 'calc(100vh - 350px)', minHeight: 450 }}>
-        
         <div style={{ background: '#fff', borderRadius: 14, border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <MapContainer 
-            center={[PHARMACIE_CONFIG.lat, PHARMACIE_CONFIG.lng]} 
-            zoom={PHARMACIE_CONFIG.zoomInitial} 
-            style={{ height: '100%', width: '100%' }}
-          >
+          <MapContainer center={[PHARMACIE_CONFIG.lat, PHARMACIE_CONFIG.lng]} zoom={PHARMACIE_CONFIG.zoomInitial} style={{ height: '100%', width: '100%' }}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            
-            {/* MARQUEUR VERT DE LA PHARMACIE */}
             <Marker position={[PHARMACIE_CONFIG.lat, PHARMACIE_CONFIG.lng]} icon={greenIcon}>
               <Popup><strong>✚ {PHARMACIE_CONFIG.nom}</strong></Popup>
             </Marker>
-
             {filtered.map(l => (
               <Marker key={l.id} position={[l.lat || PHARMACIE_CONFIG.lat, l.lng || PHARMACIE_CONFIG.lng]}>
-                <Popup>
-                  <strong>{l.client_nom}</strong><br/>
-                  {l.adresse}
-                </Popup>
+                <Popup><strong>{l.client_nom}</strong><br/>{l.adresse}</Popup>
               </Marker>
             ))}
           </MapContainer>
         </div>
 
-        {/* LISTE */}
         <div style={{ background: '#fff', borderRadius: 14, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '15px', borderBottom: '1px solid var(--border)', fontWeight: 700 }}>Files des colis ({filtered.length})</div>
           <div style={{ overflowY: 'auto', flex: 1, padding: 10, display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--bg)' }}>
@@ -159,29 +178,49 @@ export default function LivraisonsPage() {
         </div>
       </div>
 
-      {/* MODAL AJOUT */}
+      {/* MODAL AJOUT LIE A UNE COMMANDE */}
       {showModal && (
         <div className="modal-overlay" style={{ zIndex: 9999 }}>
           <div className="modal" style={{ maxWidth: 500 }}>
             <div className="modal-header">
-              <div className="modal-title">📦 Nouvelle livraison manuelle</div>
+              <div className="modal-title">📦 Préparer une livraison</div>
               <button className="modal-close" onClick={() => setShowModal(false)}>✕</button>
             </div>
             <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 15, padding: 20 }}>
+              
               <div className="form-group">
-                <label className="form-label">Nom du Client</label>
-                <input required className="form-input" value={form.client_nom} onChange={e => setForm({...form, client_nom: e.target.value})} />
+                <label className="form-label">Sélectionner la Commande Payée</label>
+                <select 
+                  className="form-input" 
+                  required 
+                  value={form.vente_id}
+                  onChange={(e) => handleSelectCommande(e.target.value)}
+                >
+                  <option value="">-- Choisir une commande --</option>
+                  {commandes.map(c => (
+                    <option key={c.id} value={c.id}>#{c.numero} - {c.client_nom}</option>
+                  ))}
+                </select>
               </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-group">
+                  <label className="form-label">Client</label>
+                  <input className="form-input" value={form.client_nom} readOnly style={{ background: '#f5f5f5', color: '#888' }} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Téléphone</label>
+                  <input className="form-input" value={form.client_tel} readOnly style={{ background: '#f5f5f5', color: '#888' }} />
+                </div>
+              </div>
+
               <div className="form-group">
-                <label className="form-label">Téléphone</label>
-                <input required className="form-input" value={form.client_tel} onChange={e => setForm({...form, client_tel: e.target.value})} />
+                <label className="form-label">Adresse de livraison précise</label>
+                <textarea required className="form-input" placeholder="Ex: Avenue de la Paix, Immeuble B, 2ème étage" value={form.adresse} onChange={e => setForm({...form, adresse: e.target.value})} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Adresse</label>
-                <textarea required className="form-input" value={form.adresse} onChange={e => setForm({...form, adresse: e.target.value})} />
-              </div>
-              <button type="submit" className="btn btn-primary btn-lg" disabled={loading}>
-                {loading ? 'Création...' : 'Enregistrer la livraison'}
+
+              <button type="submit" className="btn btn-primary btn-lg" disabled={loading || !form.vente_id}>
+                {loading ? 'Création...' : 'Lancer la livraison'}
               </button>
             </form>
           </div>

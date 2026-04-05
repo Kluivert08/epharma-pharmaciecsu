@@ -5,9 +5,9 @@ import { signOut, supabase } from '../lib/supabase'
 import { initStreamClient, disconnectStream, STREAM_API_KEY } from '../lib/getstream'
 
 const ROLE_MENUS = {
-  admin:      ['dashboard','pos','caisse','stock','ventes','compta','assurance','livraisons','audit','admin','profil'],
+  admin:      ['dashboard','pos',,'achats-en-ligne','caisse','stock','ventes','compta','assurance','livraisons','audit','admin','profil'],
   stock:      ['dashboard','stock','profil'],
-  vendeuse:   ['dashboard','pos','livraisons','profil'],
+  vendeuse:   ['dashboard','pos','achats-en-ligne','livraisons','profil'],
   caissiere:  ['dashboard','caisse','ventes','profil'],
   comptable:  ['dashboard','ventes','compta','assurance','profil'],
 }
@@ -15,6 +15,7 @@ const ROLE_MENUS = {
 const MENUS = [
   { id:'dashboard',  label:'Tableau de bord', icon:'📊', path:'/' },
   { id:'pos',        label:'Point de vente',  icon:'🛒', path:'/pos' },
+  { id:'achats-en-ligne', label:'Achats en ligne', icon:'🛍️', path:'/achats-en-ligne' },
   { id:'caisse',     label:'Caisse',           icon:'💰', path:'/caisse' },
   { id:'stock',      label:'Stock',            icon:'📦', path:'/stock' },
   { id:'ventes',     label:'Ventes',           icon:'📋', path:'/ventes' },
