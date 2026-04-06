@@ -64,15 +64,27 @@ export async function createStaff(staffData) {
 }
 
 // ── PRODUITS ──────────────────────────────────────────────────
-export async function getProduits(categorieId = null) {
-  let q = supabase
+// Recherche dans produit_peremption par num_id (codebarre)
+export async function getProduitByNumId(numId) {
+  // 1. Chercher la ligne péremption
+  const { data: ligne } = await supabase
+    .from('produit_peremption')
+    .select('id, produit_id, date_peremption, statut, code_lot, num_id')
+    .eq('num_id', numId.trim())
+    .maybeSingle()
+
+  if (!ligne) return null
+
+  // 2. Récupérer le produit associé
+  const { data: produit } = await supabase
     .from('produits')
     .select('*, categories(slug, nom_fr, emoji)')
+    .eq('id', ligne.produit_id)
     .eq('actif', true)
-    .order('nom')
-  if (categorieId) q = q.eq('categorie_id', categorieId)
-  const { data } = await q
-  return data ?? []
+    .maybeSingle()
+
+  if (!produit) return null
+  return { ...produit, _ligne_peremption: ligne }
 }
 
 export async function getCategories() {
@@ -91,15 +103,7 @@ export async function createProduit(data) {
 
 // ── COMMANDES POS ─────────────────────────────────────────────
 // Rechercher produit par NumId (QR Code scan)
-export async function getProduitByNumId(numId) {
-  const { data } = await supabase
-    .from('produits')
-    .select('*, categories(slug, nom_fr, emoji)')
-    .eq('num_id', numId)
-    .eq('actif', true)
-    .maybeSingle()
-  return data
-}
+
 
 // Vérifier péremption d'un produit
 export async function verifierPeremption(nomProduit) {
