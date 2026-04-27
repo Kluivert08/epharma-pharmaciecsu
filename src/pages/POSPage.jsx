@@ -6,14 +6,13 @@ import QRScanner from '../components/QRScanner'
 // ── SEUIL CRITIQUE STOCK ──────────────────────────────────────
 const SEUIL_CRITIQUE = 5
 
-// ── FEFO : Logique principale ─────────────────────────────────
-// Retourne : { ok, action, scanne, mieux, stockCritique }
-// action = 'ajouter' | 'alerte_fefo' | 'alerte_critique' | 'rupture' | 'introuvable' | 'deja_vendu'
+// ── FEFO RAYON : vérifie que le produit scanné est au rayon ──
+// action = 'ajouter' | 'alerte_fefo' | 'pas_au_rayon' | 'rupture_rayon' | 'introuvable' | 'deja_vendu'
 async function verifierFEFO(numId) {
-  // 1. Chercher la ligne dans produit_peremption par num_id (codebarre scanné)
+  // 1. Chercher le lot dans produit_peremption par num_id
   const { data: ligne, error } = await supabase
     .from('produit_peremption')
-    .select('id, produit_id, date_peremption, statut, code_lot, num_id')
+    .select('id, produit_id, date_peremption, statut, code_lot, num_id, emplacement, quantite_rayon, quantite')
     .eq('num_id', numId.trim())
     .maybeSingle()
 
@@ -21,7 +20,19 @@ async function verifierFEFO(numId) {
     return { ok: false, action: 'introuvable', message: `Codebarre "${numId}" non trouvé dans le stock` }
   }
 
-  if (ligne.statut !== 'en_stock') {
+  // 2. PATCH v2 : vérifier que le lot est bien au RAYON
+  const emplacement = ligne.emplacement || ligne.statut
+  const estAuRayon  = emplacement === 'rayon' || ligne.statut === 'rayon'
+  const estEnStock  = ligne.statut === 'en_stock' || ligne.statut === 'rayon'
+
+  if (!estAuRayon && !estEnStock) {
+    if (ligne.statut === 'reserve') {
+      return {
+        ok: false,
+        action: 'pas_au_rayon',
+        message: `Ce produit est encore à la Réserve (${ligne.num_id}). Le magasinier doit d'abord le transférer au Rayon.`,
+      }
+    }
     return {
       ok: false,
       action: 'deja_vendu',
@@ -29,10 +40,19 @@ async function verifierFEFO(numId) {
     }
   }
 
-  const produitId      = ligne.produit_id
-  const dateScannee    = ligne.date_peremption
+  const qteDisponible = ligne.quantite_rayon ?? ligne.quantite ?? 0
+  if (qteDisponible <= 0) {
+    return {
+      ok: false,
+      action: 'rupture_rayon',
+      message: `Ce lot est épuisé au Rayon. Demandez au magasinier de recharger.`,
+    }
+  }
 
-  // 2. Vérifier le stock global du produit (table produits)
+  const produitId   = ligne.produit_id
+  const dateScannee = ligne.date_peremption
+
+  // 3. Récupérer le produit catalogue
   const { data: produit } = await supabase
     .from('produits')
     .select('*, categories(slug, nom_fr, emoji)')
@@ -44,47 +64,43 @@ async function verifierFEFO(numId) {
     return { ok: false, action: 'introuvable', message: 'Produit introuvable dans le catalogue' }
   }
 
-  if (produit.stock <= 0) {
-    return { ok: false, action: 'rupture', message: `⛔ ${produit.nom} — rupture de stock`, produit }
-  }
-
-  const stockCritique = produit.stock <= SEUIL_CRITIQUE
-
-  // 3. Récupérer TOUS les exemplaires en_stock du même produit → FEFO
-  const { data: tousEnStock } = await supabase
+  // 4. Vérifier stock rayon global du produit
+  const { data: lotsRayon } = await supabase
     .from('produit_peremption')
-    .select('id, date_peremption, code_lot, num_id')
+    .select('id, date_peremption, code_lot, num_id, quantite_rayon, quantite')
     .eq('produit_id', produitId)
-    .eq('statut', 'en_stock')
+    .in('statut', ['rayon', 'en_stock'])
     .order('date_peremption', { ascending: true })
 
-  if (!tousEnStock || tousEnStock.length === 0) {
-    return { ok: false, action: 'rupture', message: `⛔ ${produit.nom} — aucun exemplaire en stock`, produit }
+  const stockRayonTotal = (lotsRayon || []).reduce((s, l) => s + (l.quantite_rayon ?? l.quantite ?? 0), 0)
+
+  if (!lotsRayon || lotsRayon.length === 0 || stockRayonTotal <= 0) {
+    return { ok: false, action: 'rupture_rayon', message: `⛔ ${produit.nom} — rupture au Rayon. Demandez un réapprovisionnement.`, produit }
   }
 
-  // 4. Le plus proche à expirer
-  const plusProche = tousEnStock[0]
+  const stockCritique = stockRayonTotal <= SEUIL_CRITIQUE
 
-  // 5. Comparer : est-ce que le scanné EST le plus proche ?
+  // 5. FEFO : le plus proche à expirer au rayon
+  const plusProche = lotsRayon[0]
+
+  // 6. Comparer
   const estLePlusProche = plusProche.num_id === numId || plusProche.date_peremption === dateScannee
 
   if (estLePlusProche) {
-    // ✅ FEFO respecté — ajouter au panier
     return {
-      ok:           true,
-      action:       'ajouter',
-      scanne:       ligne,
+      ok: true,
+      action: 'ajouter',
+      scanne: ligne,
       produit,
       stockCritique,
-      message:      stockCritique
-        ? `⚠️ Stock critique : ${produit.stock} unité${produit.stock > 1 ? 's' : ''} restante${produit.stock > 1 ? 's' : ''}`
+      stockRayon: stockRayonTotal,
+      message: stockCritique
+        ? `⚠️ Stock rayon critique : ${stockRayonTotal} unité${stockRayonTotal > 1 ? 's' : ''} restante${stockRayonTotal > 1 ? 's' : ''}`
         : null,
     }
   } else {
-    // ❌ FEFO non respecté — un autre expire avant
-    const joursScanne  = Math.floor((new Date(dateScannee) - new Date()) / 86400000)
-    const joursMieux   = Math.floor((new Date(plusProche.date_peremption) - new Date()) / 86400000)
-
+    const joursScanne = Math.floor((new Date(dateScannee) - new Date()) / 86400000)
+    const joursMieux  = Math.floor((new Date(plusProche.date_peremption) - new Date()) / 86400000)
     return {
       ok:     false,
       action: 'alerte_fefo',
@@ -92,36 +108,51 @@ async function verifierFEFO(numId) {
       mieux:  plusProche,
       produit,
       stockCritique,
+      stockRayon: stockRayonTotal,
       message: `Ce produit expire le ${new Date(dateScannee).toLocaleDateString('fr-FR')} (J-${joursScanne}), mais un autre expire avant.`,
-      messageMieux: `Cherchez le produit avec le lot : ${plusProche.code_lot || plusProche.num_id} — expire le ${new Date(plusProche.date_peremption).toLocaleDateString('fr-FR')} (J-${joursMieux})`,
+      messageMieux: `Cherchez le lot : ${plusProche.code_lot || plusProche.num_id} — expire le ${new Date(plusProche.date_peremption).toLocaleDateString('fr-FR')} (J-${joursMieux})`,
     }
   }
 }
 
-// Recherche produit depuis le catalogue (clic) → FEFO avec le plus proche automatique
-async function getPlusProcheFEFO(produitId) {
+// Clic catalogue → FEFO rayon automatique (plus proche au rayon)
+async function getPlusProcheFEFO_Rayon(produitId) {
   const { data } = await supabase
     .from('produit_peremption')
-    .select('id, date_peremption, code_lot, num_id, statut')
+    .select('id, date_peremption, code_lot, num_id, statut, quantite_rayon, quantite')
     .eq('produit_id', produitId)
-    .eq('statut', 'en_stock')
+    .in('statut', ['rayon', 'en_stock'])
+    .gt('quantite_rayon', 0)
     .order('date_peremption', { ascending: true })
     .limit(1)
     .maybeSingle()
   return data
 }
 
+// Stock rayon d'un produit (somme tous lots rayon)
+async function getStockRayon(produitId) {
+  const { data } = await supabase
+    .from('produit_peremption')
+    .select('quantite_rayon, quantite')
+    .eq('produit_id', produitId)
+    .in('statut', ['rayon', 'en_stock'])
+  return (data || []).reduce((s, l) => s + (l.quantite_rayon ?? l.quantite ?? 0), 0)
+}
+
 // ── Modal FEFO Alert ──────────────────────────────────────────
 function AlerteFEFO({ resultat, onClose, onConfirm }) {
-  const { action, produit, scanne, mieux, message, messageMieux, stockCritique } = resultat
+  const { action, produit, scanne, mieux, message, messageMieux, stockCritique, stockRayon } = resultat
 
-  if (action === 'introuvable' || action === 'deja_vendu' || action === 'rupture') {
+  if (action === 'introuvable' || action === 'deja_vendu' || action === 'rupture_rayon' || action === 'pas_au_rayon') {
     return (
       <div className="modal-overlay">
         <div className="modal" style={{ maxWidth: 440 }}>
           <div className="modal-header">
             <div className="modal-title">
-              {action === 'rupture' ? '⛔ Rupture de stock' : action === 'deja_vendu' ? '🔄 Déjà vendu' : '❓ Introuvable'}
+              {action === 'rupture_rayon' ? '⛔ Rupture au Rayon'
+                : action === 'pas_au_rayon' ? '📦 Produit en Réserve'
+                : action === 'deja_vendu' ? '🔄 Déjà vendu'
+                : '❓ Introuvable'}
             </div>
             <button className="modal-close" onClick={onClose}>✕</button>
           </div>
@@ -130,7 +161,7 @@ function AlerteFEFO({ resultat, onClose, onConfirm }) {
           </div>
           {produit && (
             <div style={{ padding: 12, background: 'var(--g1)', borderRadius: 10, marginBottom: 16, fontSize: 13 }}>
-              {produit.emoji} <strong>{produit.nom}</strong> · Stock : {produit.stock}
+              {produit.emoji} <strong>{produit.nom}</strong> · Stock rayon : {stockRayon ?? 0}
             </div>
           )}
           <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={onClose}>Compris</button>
@@ -174,7 +205,7 @@ function AlerteFEFO({ resultat, onClose, onConfirm }) {
 
           {stockCritique && (
             <div style={{ padding: '8px 12px', background: '#FFF3E0', borderRadius: 8, marginBottom: 14, fontSize: 12, color: '#E65100', fontWeight: 600 }}>
-              ⚠️ Stock critique : {produit?.stock} unité{produit?.stock > 1 ? 's' : ''} restante{produit?.stock > 1 ? 's' : ''}
+              ⚠️ Stock rayon critique : {stockRayon} unité{stockRayon > 1 ? 's' : ''} restante{stockRayon > 1 ? 's' : ''}
             </div>
           )}
 
@@ -198,13 +229,13 @@ function AlerteFEFO({ resultat, onClose, onConfirm }) {
       <div className="modal-overlay">
         <div className="modal" style={{ maxWidth: 420 }}>
           <div className="modal-header">
-            <div className="modal-title">⚠️ Stock critique</div>
+            <div className="modal-title">⚠️ Stock rayon critique</div>
             <button className="modal-close" onClick={onClose}>✕</button>
           </div>
           <div style={{ padding: 14, background: '#FFF3E0', borderRadius: 10, marginBottom: 16, fontSize: 14, color: '#E65100' }}>
             <strong>{produit?.emoji} {produit?.nom}</strong><br/>
-            Il ne reste que <strong>{produit?.stock} unité{produit?.stock > 1 ? 's' : ''}</strong> en stock.<br/>
-            Pensez à réapprovisionner.
+            Il ne reste que <strong>{stockRayon} unité{stockRayon > 1 ? 's' : ''}</strong> au Rayon.<br/>
+            Pensez à demander un réapprovisionnement au magasinier.
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-outline" style={{ flex: 1 }} onClick={onClose}>Annuler</button>
@@ -340,6 +371,8 @@ export default function POSPage() {
   const [produits,        setProduits]        = useState([])
   const [categories,      setCategories]      = useState([])
   const [assurances,      setAssurances]      = useState([])
+  // stockRayon : { [produit_id]: number } — stock rayon en temps réel
+  const [stockRayon,      setStockRayon]      = useState({})
   const [curCat,          setCurCat]          = useState('all')
   const [search,          setSearch]          = useState('')
   const [panier,          setPanier]          = useState([])
@@ -351,7 +384,7 @@ export default function POSPage() {
   const [loading,         setLoading]         = useState(false)
   const [cmdEnvoyee,      setCmdEnvoyee]      = useState(null)
   const [showQRProduit,   setShowQRProduit]   = useState(false)
-  const [alerteFEFO,      setAlerteFEFO]      = useState(null)   // résultat verifierFEFO
+  const [alerteFEFO,      setAlerteFEFO]      = useState(null)
   const [scanError,       setScanError]       = useState(null)
   const [fefoLoading,     setFefoLoading]     = useState(false)
   const manualInputRef                         = useRef(null)
@@ -365,15 +398,40 @@ export default function POSPage() {
       .select('*, assurance_services(*)')
       .eq('active', true)
     setProduits(p); setCategories(c); setAssurances(a ?? [])
+    // Charger le stock rayon pour chaque produit
+    await chargerStocksRayon(p)
+  }
+
+  // Charge les stocks rayon de tous les produits en une seule requête
+  async function chargerStocksRayon(prods) {
+    if (!prods?.length) return
+    const { data } = await supabase
+      .from('produit_peremption')
+      .select('produit_id, quantite_rayon, quantite')
+      .in('statut', ['rayon', 'en_stock'])
+    if (!data) return
+    const map = {}
+    data.forEach(l => {
+      const q = l.quantite_rayon ?? l.quantite ?? 0
+      map[l.produit_id] = (map[l.produit_id] || 0) + q
+    })
+    setStockRayon(map)
+  }
+
+  // Stock rayon d'un produit (depuis le state local)
+  function getStockRayonLocal(produitId) {
+    return stockRayon[produitId] ?? 0
   }
 
   const filtered = produits.filter(p => {
     const matchCat    = curCat === 'all' || p.categories?.slug === curCat
     const matchSearch = !search || p.nom.toLowerCase().includes(search.toLowerCase()) || p.coderange?.toLowerCase().includes(search.toLowerCase())
-    return matchCat && matchSearch
+    // PATCH v2 : afficher seulement les produits avec stock rayon > 0
+    const hasRayon    = getStockRayonLocal(p.id) > 0
+    return matchCat && matchSearch && (hasRayon || p.stock > 0) // fallback si pas encore de lots
   })
 
-  // ── Ajout via SCAN / SAISIE MANUELLE (num_id de produit_peremption) ──
+  // ── Ajout via SCAN / SAISIE MANUELLE ─────────────────────────
   async function handleScanOuSaisie(numId) {
     if (!numId?.trim()) return
     setShowQRProduit(false)
@@ -384,10 +442,8 @@ export default function POSPage() {
     setFefoLoading(false)
 
     if (resultat.action === 'ajouter' && !resultat.stockCritique) {
-      // Ajout direct sans popup
       addToCart(resultat.produit, resultat.scanne)
     } else {
-      // Afficher la modale FEFO (alerte, critique, erreur)
       setAlerteFEFO({
         ...resultat,
         onConfirmCallback: () => addToCart(resultat.produit, resultat.scanne),
@@ -395,26 +451,27 @@ export default function POSPage() {
     }
   }
 
-  // ── Clic catalogue → FEFO automatique (prend le plus proche) ──
+  // ── Clic catalogue → FEFO rayon automatique ──────────────────
   async function handleClicCatalogue(produit) {
-    if (produit.stock <= 0) return
+    const stockR = getStockRayonLocal(produit.id)
+    if (stockR <= 0) {
+      // Pas de stock rayon → refus
+      setScanError(`⛔ ${produit.nom} n'est pas disponible au Rayon. Demandez au magasinier de le mettre en rayon.`)
+      setTimeout(() => setScanError(null), 4000)
+      return
+    }
     setScanError(null)
     setFefoLoading(true)
 
-    // Vérifier stock critique
-    const stockCritique = produit.stock <= SEUIL_CRITIQUE
-
-    // Prendre automatiquement le plus proche à expirer
-    const plusProche = await getPlusProcheFEFO(produit.id)
+    const stockCritique = stockR <= SEUIL_CRITIQUE
+    const plusProche    = await getPlusProcheFEFO_Rayon(produit.id)
     setFefoLoading(false)
 
     if (!plusProche) {
-      // Pas de ligne dans produit_peremption → ajouter normalement
+      // Pas de lots dans produit_peremption — ajouter avec stock catalogue
       if (stockCritique) {
         setAlerteFEFO({
-          action: 'ajouter',
-          produit,
-          stockCritique: true,
+          action: 'ajouter', produit, stockCritique: true, stockRayon: stockR,
           onConfirmCallback: () => addToCartSimple(produit),
         })
       } else {
@@ -425,11 +482,8 @@ export default function POSPage() {
 
     if (stockCritique) {
       setAlerteFEFO({
-        action: 'ajouter',
-        produit,
-        scanne: plusProche,
-        stockCritique: true,
-        message: `Stock critique : ${produit.stock} unité${produit.stock > 1 ? 's' : ''} restante${produit.stock > 1 ? 's' : ''}`,
+        action: 'ajouter', produit, scanne: plusProche, stockCritique: true, stockRayon: stockR,
+        message: `Stock rayon critique : ${stockR} unité${stockR > 1 ? 's' : ''} restante${stockR > 1 ? 's' : ''}`,
         onConfirmCallback: () => addToCart(produit, plusProche),
       })
     } else {
@@ -437,13 +491,18 @@ export default function POSPage() {
     }
   }
 
-  // ── Ajout panier avec ligne péremption ────────────────────
+  // ── Ajout panier avec ligne péremption ────────────────────────
   function addToCart(produit, lignePer = null) {
-    if (!produit || produit.stock <= 0) return
+    if (!produit) return
+    const stockR = getStockRayonLocal(produit.id)
+    // PATCH v2 : prix TTC en priorité
+    const prixUnitaire = produit.prix_ttc || produit.prix_fcfa || 0
+
     setPanier(prev => {
       const ex = prev.find(i => i.produit_id === produit.id)
+      const maxQty = stockR > 0 ? stockR : produit.stock
       if (ex) {
-        if (ex.quantite >= produit.stock) return prev
+        if (ex.quantite >= maxQty) return prev
         return prev.map(i => i.produit_id === produit.id
           ? { ...i, quantite: i.quantite + 1, total_ligne: (i.quantite + 1) * i.prix_unitaire }
           : i)
@@ -452,18 +511,20 @@ export default function POSPage() {
         produit_id:      produit.id,
         nom:             produit.nom,
         emoji:           produit.emoji,
-        prix_unitaire:   produit.prix_fcfa,
+        prix_unitaire:   prixUnitaire,
+        tva_pct:         produit.tva_pct || 18,
+        ca_pct:          produit.ca_pct  || 5,
         categorie_slug:  produit.categories?.slug,
         quantite:        1,
         remise_pct:      0,
-        total_ligne:     produit.prix_fcfa,
+        total_ligne:     prixUnitaire,
         couvert:         false,
         coderange:       produit.coderange,
-        // Infos péremption de la ligne spécifique
-        num_id_perem:    lignePer?.num_id      || null,
-        code_lot:        lignePer?.code_lot    || null,
-        date_peremption: lignePer?.date_peremption || null,
-        perem_id:        lignePer?.id          || null,
+        // Infos péremption
+        num_id_perem:    lignePer?.num_id           || null,
+        code_lot:        lignePer?.code_lot         || null,
+        date_peremption: lignePer?.date_peremption  || null,
+        perem_id:        lignePer?.id               || null,
       }]
     })
   }
@@ -522,8 +583,11 @@ export default function POSPage() {
       staff.id,
       panier.map(i => ({
         produit_id:    i.produit_id,
+        lot_id:        i.perem_id || null,
         quantite:      i.quantite,
         prix_unitaire: i.prix_unitaire,
+        tva_pct:       i.tva_pct || 18,
+        ca_pct:        i.ca_pct  || 5,
         remise_pct:    i.remise_pct,
         total_ligne:   Math.round(i.total_ligne),
       })),
@@ -533,18 +597,32 @@ export default function POSPage() {
     setLoading(false)
     if (error) { alert('Erreur: ' + error.message); return }
 
-    // Marquer les exemplaires comme vendus dans produit_peremption
-    const idsPerem = panier.filter(i => i.perem_id).map(i => i.perem_id)
-    if (idsPerem.length > 0) {
-      await supabase
-        .from('produit_peremption')
-        .update({ statut: 'vendu' })
-        .in('id', idsPerem)
+    // PATCH v2 : décrémenter stock rayon dans produit_peremption
+    for (const item of panier) {
+      if (item.perem_id) {
+        // Lot connu → décrémenter quantite_rayon
+        const { data: lot } = await supabase
+          .from('produit_peremption')
+          .select('quantite_rayon, quantite')
+          .eq('id', item.perem_id)
+          .single()
+        const qteRayon = lot?.quantite_rayon ?? lot?.quantite ?? 0
+        const newQte   = Math.max(0, qteRayon - item.quantite)
+        await supabase
+          .from('produit_peremption')
+          .update({
+            quantite_rayon: newQte,
+            statut: newQte <= 0 ? 'vendu' : 'rayon',
+          })
+          .eq('id', item.perem_id)
+      }
     }
 
     setCmdEnvoyee(data)
     setPanier([]); setClientNom(''); setClientTel('')
     retirerAssurance()
+    // Rafraîchir les stocks rayon
+    await chargerStocksRayon(produits)
   }
 
   return (
@@ -563,7 +641,7 @@ export default function POSPage() {
       {fefoLoading && (
         <div style={{ padding: '10px 16px', background: 'var(--g1)', borderRadius: 10, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--g4)' }}>
           <div className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} />
-          Vérification FEFO en cours...
+          Vérification FEFO rayon en cours...
         </div>
       )}
 
@@ -571,7 +649,6 @@ export default function POSPage() {
         {/* ── Catalogue ── */}
         <div className="pos-products">
           <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-            {/* Barre recherche — supporte aussi saisie codebarre manuel */}
             <input
               ref={manualInputRef}
               className="form-input"
@@ -579,7 +656,6 @@ export default function POSPage() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => {
-                // Entrée manuelle d'un codebarre (num_id produit_peremption)
                 if (e.key === 'Enter' && search.trim()) {
                   handleScanOuSaisie(search.trim())
                   setSearch('')
@@ -604,38 +680,40 @@ export default function POSPage() {
             ))}
           </div>
 
-          {/* Grille produits — SANS date péremption, AVEC coderange */}
+          {/* Grille produits — stock RAYON */}
           <div className="product-grid">
-            {filtered.map(p => (
-              <div key={p.id} className="product-tile"
-                onClick={() => handleClicCatalogue(p)}
-                style={{ opacity: p.stock <= 0 ? 0.4 : 1, cursor: p.stock <= 0 ? 'not-allowed' : 'pointer', position: 'relative' }}>
+            {filtered.map(p => {
+              const stockR = getStockRayonLocal(p.id)
+              const prixAff = p.prix_ttc || p.prix_fcfa || 0
+              return (
+                <div key={p.id} className="product-tile"
+                  onClick={() => handleClicCatalogue(p)}
+                  style={{ opacity: stockR <= 0 ? 0.4 : 1, cursor: stockR <= 0 ? 'not-allowed' : 'pointer', position: 'relative' }}>
 
-                {/* Badge stock critique */}
-                {p.stock > 0 && p.stock <= SEUIL_CRITIQUE && (
-                  <div style={{ position: 'absolute', top: 6, right: 6, fontSize: 12 }} title="Stock critique">⚠️</div>
-                )}
+                  {stockR > 0 && stockR <= SEUIL_CRITIQUE && (
+                    <div style={{ position: 'absolute', top: 6, right: 6, fontSize: 12 }} title="Stock rayon critique">⚠️</div>
+                  )}
 
-                <div className="product-tile-emoji">{p.emoji}</div>
-                <div className="product-tile-name">{p.nom}</div>
-                <div style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 2 }}>{p.conditionnement}</div>
+                  <div className="product-tile-emoji">{p.emoji}</div>
+                  <div className="product-tile-name">{p.nom}</div>
+                  <div style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 2 }}>{p.conditionnement}</div>
 
-                {/* Coderange à la place de la date de péremption */}
-                {p.coderange && (
-                  <div style={{ fontSize: 10, color: 'var(--g4)', marginBottom: 4, fontFamily: 'monospace', fontWeight: 700, background: 'var(--g1)', padding: '2px 6px', borderRadius: 6, display: 'inline-block' }}>
-                    📍 {p.coderange}
-                  </div>
-                )}
+                  {p.coderange && (
+                    <div style={{ fontSize: 10, color: 'var(--g4)', marginBottom: 4, fontFamily: 'monospace', fontWeight: 700, background: 'var(--g1)', padding: '2px 6px', borderRadius: 6, display: 'inline-block' }}>
+                      📍 {p.coderange}
+                    </div>
+                  )}
 
-                <div className="product-tile-price">{p.prix_fcfa?.toLocaleString('fr-FR')} F</div>
+                  <div className="product-tile-price">{prixAff.toLocaleString('fr-FR')} F</div>
 
-                {p.stock <= 0
-                  ? <div style={{ fontSize: 10, color: 'var(--danger2)', marginTop: 4 }}>⛔ Rupture</div>
-                  : p.stock <= SEUIL_CRITIQUE
-                  ? <div style={{ fontSize: 10, color: '#E65100', marginTop: 4 }}>⚠️ Seuil critique : {p.stock}</div>
-                  : <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>Stock : {p.stock}</div>}
-              </div>
-            ))}
+                  {stockR <= 0
+                    ? <div style={{ fontSize: 10, color: 'var(--danger2)', marginTop: 4 }}>⛔ Rayon vide</div>
+                    : stockR <= SEUIL_CRITIQUE
+                    ? <div style={{ fontSize: 10, color: '#E65100', marginTop: 4 }}>⚠️ Rayon : {stockR}</div>
+                    : <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>Rayon : {stockR}</div>}
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -680,7 +758,7 @@ export default function POSPage() {
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--t3)' }}>
                 <div style={{ fontSize: 36, marginBottom: 8 }}>🛒</div>
                 <div style={{ fontSize: 13 }}>Scannez ou cliquez sur un produit</div>
-                <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 4 }}>FEFO automatique activé</div>
+                <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 4 }}>FEFO Rayon automatique activé</div>
               </div>
             ) : (
               panier.map(item => (

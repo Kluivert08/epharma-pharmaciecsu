@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext } from 'react'
 import { AuthContext } from '../App'
-import { getEcritures, addEcriture, supabase } from '../lib/supabase'
+import { getEcritures, addEcriture, syncVentesVersCompta, supabase } from '../lib/supabase'
 
 // ── Utilitaires export ────────────────────────────────────────
 function exportCSV(ecritures, filename) {
@@ -72,6 +72,8 @@ export default function ComptaPage() {
   const [ecritures,  setEcritures]  = useState([])
   const [loading,    setLoading]    = useState(true)
   const [showModal,  setShowModal]  = useState(false)
+  const [syncing,    setSyncing]    = useState(false)
+  const [syncMsg,    setSyncMsg]    = useState(null)
   const [sendingReport, setSendingReport] = useState(false)
   const [reportMsg,  setReportMsg]  = useState(null)
   const [showReportModal, setShowReportModal] = useState(false)
@@ -112,6 +114,21 @@ export default function ComptaPage() {
     const { data } = await q.limit(500)
     setEcritures(data ?? [])
     setLoading(false)
+  }
+
+  async function handleSync() {
+    setSyncing(true); setSyncMsg(null)
+    const { inserted, error } = await syncVentesVersCompta()
+    if (error) {
+      setSyncMsg({ type:'error', text: 'Erreur : ' + error.message })
+    } else {
+      setSyncMsg({ type:'success', text: inserted > 0
+        ? `✅ ${inserted} vente(s) importée(s) dans la comptabilité`
+        : '✅ Tout est déjà synchronisé' })
+      loadData()
+    }
+    setSyncing(false)
+    setTimeout(() => setSyncMsg(null), 4000)
   }
 
   async function handleAdd() {
@@ -155,6 +172,11 @@ export default function ComptaPage() {
 
   return (
     <div>
+      {syncMsg && (
+        <div className={`alert ${syncMsg.type==='success'?'alert-success':'alert-error'}`} style={{ marginBottom:14 }}>
+          {syncMsg.text}
+        </div>
+      )}
       {/* Filtres + actions */}
       <div className="card" style={{ marginBottom:20 }}>
         <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
@@ -185,6 +207,11 @@ export default function ComptaPage() {
             </>
           )}
           <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
+            <button className="btn btn-outline btn-sm"
+              onClick={handleSync} disabled={syncing}
+              title="Importer les ventes encaissées manquantes">
+              {syncing ? '⏳' : '🔄'} Sync ventes
+            </button>
             <button className="btn btn-outline btn-sm" onClick={() => exportCSV(ecritures, `compta-${filtre}-${Date.now()}.csv`)}>
               📥 CSV
             </button>

@@ -2,6 +2,89 @@ import React, { useEffect, useState, useContext, useRef } from 'react'
 import { getCommandesPOSEnAttente, encaisserCommande, annulerCommande, ecouterCommandesPOS } from '../lib/supabase'
 import { AuthContext } from '../App'
 
+
+// ── Impression reçu 180mm ─────────────────────────────────────
+function imprimerRecu(commande, modePaiement) {
+  const articles = commande.articles || []
+  const sousTotal = articles.reduce((s, a) => s + (a.prix * a.quantite), 0)
+  const total     = commande.total || sousTotal
+  // TVA 18% et CA 5% calculés sur le sous-total HT implicite
+  // PrixTTC = PrixHT * (1 + TVA/100 + CA_TVA/100)
+  // On affiche TVA et CA tels qu'inclus dans les prix TTC
+  const tauxTVA   = 18
+  const tauxCA    = 5  // % de TVA
+  const htImplicite = sousTotal / (1 + tauxTVA / 100 * (1 + tauxCA / 100))
+  const montantTVA  = Math.round(htImplicite * tauxTVA / 100)
+  const montantCA   = Math.round(montantTVA * tauxCA / 100)
+  const montantAss  = commande.montant_assurance || 0
+
+  const lignes = articles.map(a => `
+    <tr>
+      <td style="padding:3px 0">${a.emoji || ''} ${a.nom}</td>
+      <td style="text-align:center;padding:3px 4px">${a.quantite}</td>
+      <td style="text-align:right;padding:3px 0">${(a.prix * a.quantite).toLocaleString('fr-FR')}</td>
+    </tr>`).join('')
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Reçu ${commande.numero}</title>
+  <style>
+    @page { size: 80mm auto; margin: 4mm 3mm; }
+    body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; width: 74mm; margin: 0 auto; }
+    .center { text-align: center; }
+    .bold   { font-weight: 700; }
+    .sep    { border: none; border-top: 1px dashed #000; margin: 6px 0; }
+    table   { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th      { text-align: left; font-size: 10px; border-bottom: 1px solid #000; padding-bottom: 3px; }
+    .total-row td { border-top: 1px dashed #000; padding-top: 4px; font-weight: 700; font-size: 13px; }
+    .footer { font-size: 10px; margin-top: 10px; text-align: center; color: #555; }
+  </style>
+</head>
+<body>
+  <div class="center bold" style="font-size:14px;margin-bottom:2px">✚ PHARMACIE CSU</div>
+  <div class="center" style="font-size:10px">Brazzaville · Tel: +242 06 000 00 00</div>
+  <hr class="sep">
+  <div style="font-size:10px">
+    <div>Reçu N° : <strong>${commande.numero}</strong></div>
+    <div>Date    : ${new Date().toLocaleString('fr-FR')}</div>
+    <div>Caisse  : ${commande.caissiere || '—'}</div>
+    ${commande.client_nom ? `<div>Client  : ${commande.client_nom}</div>` : ''}
+    ${commande.nom_assure ? `<div>Assuré  : ${commande.nom_assure} (${commande.assurance || ''})</div>` : ''}
+  </div>
+  <hr class="sep">
+  <table>
+    <thead><tr><th>Article</th><th style="text-align:center">Qté</th><th style="text-align:right">Montant</th></tr></thead>
+    <tbody>${lignes}</tbody>
+  </table>
+  <hr class="sep">
+  <table>
+    <tbody>
+      <tr><td>Sous-total</td><td style="text-align:right">${sousTotal.toLocaleString('fr-FR')} F</td></tr>
+      <tr><td style="font-size:10px">TVA ${tauxTVA}%</td><td style="text-align:right;font-size:10px">${montantTVA.toLocaleString('fr-FR')} F</td></tr>
+      <tr><td style="font-size:10px">CA (${tauxCA}% TVA)</td><td style="text-align:right;font-size:10px">${montantCA.toLocaleString('fr-FR')} F</td></tr>
+      ${montantAss > 0 ? `<tr><td style="font-size:10px">Part assurance</td><td style="text-align:right;font-size:10px">−${montantAss.toLocaleString('fr-FR')} F</td></tr>` : ''}
+      <tr class="total-row"><td>TOTAL</td><td style="text-align:right;font-size:15px">${total.toLocaleString('fr-FR')} FCFA</td></tr>
+    </tbody>
+  </table>
+  <hr class="sep">
+  <div style="font-size:10px;margin-bottom:6px">
+    Paiement : <strong>${modePaiement?.replace('_',' ').toUpperCase() || '—'}</strong>
+  </div>
+  <div class="footer">
+    Merci pour votre visite !<br>
+    Conservez ce reçu comme justificatif.
+  </div>
+</body>
+</html>`
+
+  const w = window.open('', '_blank')
+  w.document.write(html)
+  w.document.close()
+  setTimeout(() => w.print(), 300)
+}
+
 const PAIEMENTS = [
   { id: 'mtn_momo',     label: 'MTN MoMo',    icon: '📱', color: '#FFC107' },
   { id: 'airtel_money', label: 'Airtel Money', icon: '📲', color: '#E53935' },
@@ -45,6 +128,8 @@ export default function CaissePage() {
     if (!selected) return
     setLoading(true)
     await encaisserCommande(selected.id, staff.id, modePay, refPay || null)
+    // Imprimer le reçu avec les infos de la commande
+    imprimerRecu(selected, modePay)
     setSelected(null); setModePay('especes'); setRefPay('')
     setLoading(false)
     loadCommandes()
